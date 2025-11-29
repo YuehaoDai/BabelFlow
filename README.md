@@ -2,61 +2,177 @@
 
 > Rebuild the tower, frame by frame.
 
-BabelFlow is a **self-hosted, enterprise-oriented video translation & dubbing engine** that focuses on one core idea:
+BabelFlow is a **self-hosted video translation & dubbing toolkit for creators**.
 
-> **Perfect Synchronization** – Smart semantic splitting + duration-aware TTS.
+It is designed for people who need to re-voice videos for platforms like **YouTube, Bilibili, TikTok** and beyond:
+- channel owners,
+- clip / highlights makers,
+- fansub groups,
+- small studios that want to keep everything on their own GPU box or cloud instance.
 
-它不是简单的“给视频套一层翻译 + 合成音频”，而是围绕时间轴去重构整条音轨，让译制片尽可能接近“原生配音”的体验。
+Instead of just “translating subtitles and dropping a generic voice on top”, BabelFlow rebuilds the audio track **around the original timeline** using:
 
----
-
-## ✨ Key Features
-
-- 🧠 **Smart Semantic Split**  
-  Whisper 全量 ASR（单词级时间戳）+ VAD 静音检测 + 规则引擎，按语义和停顿拆分片段，而不是机械按 5 秒一刀。
-
-- ⏱ **Duration-Aware TTS (IndexTTS2)**  
-  使用原片段时长作为硬约束，结合 IndexTTS2 时长控制能力，让生成语音长度 ≈ 原片段长度，尽量做到“音画对齐”。
-
-- 👥 **Speaker → Voice Profile 映射**  
-  对原视频做说话人聚类（SPK_01 / SPK_02 ...），再为不同角色绑定不同音色配置（样本克隆 / 预训练 checkpoint）。
-
-- 🏢 **Fully Self-Hosted, Enterprise-Ready**  
-  Go 负责调度与状态机（控制面），Python + PyTorch 负责 GPU 推理（数据面），通过 Docker Compose 在本地一键部署：
-  - Go + Gin + GORM
-  - FastAPI + PyTorch (Whisper, Demucs, IndexTTS2, etc.)
-  - PostgreSQL + Redis
-  - Shared `/data` volume
+> **Smart semantic splitting + duration-aware TTS**, so dubbed audio stays in sync with the video.
 
 ---
 
-## 🧱 High-Level Architecture
+## ✨ Features at a glance
 
-- **Control Plane (Go)**
-  - Task orchestration & state machine
-  - Job & segment management (PostgreSQL)
-  - Redis-based task queue
-  - LLM-based translation (Qwen / DeepSeek, pluggable)
+### 🎬 Timeline-first dubbing
 
-- **Data Plane (Python / GPU)**
-  - Demucs / UVR5: vocal & BGM separation
-  - Faster-Whisper: ASR with word-level timestamps
-  - Pyannote: VAD & speaker diarization
-  - IndexTTS2: duration-aware TTS
-  - FastAPI: typed ML HTTP endpoints
+- **Smart semantic split**
+  - Whisper-based ASR with **word-level timestamps**.
+  - VAD-assisted pause detection (Pyannote).
+  - Splits by **meaning and natural pauses**, not fixed chunks.
+  - Configurable segment length window (e.g. 2–15 seconds).
+
+- **Duration-aware TTS (IndexTTS2)**
+  - Every segment carries its **original duration**.
+  - IndexTTS2 uses this as a hard constraint: generated speech length ≈ original segment length.
+  - Optional `atempo` / light time-stretching as fallback when needed.
+
+### 🗣 Multi-speaker & custom voices
+
+- **Speaker diarization**
+  - Automatically clusters different speakers (e.g. `SPK_01`, `SPK_02`, …).
+  - Each segment is tagged with a speaker ID.
+
+- **Custom voice profiles**
+  - `sample` mode:
+    - Upload 1–N reference clips → zero-shot voice cloning.
+  - `checkpoint` mode:
+    - Load your own SoVITS / IndexTTS-style checkpoints  
+      (`.pth/.ckpt + .index + config`).
+  - Language tags and speaker IDs stored in the database.
+
+- **Speaker → voice mapping**
+  - For each job, map `SPK_01 / SPK_02 / …` to different voice profiles.
+  - Use different timbres in one video (host, guest, narrator…).
+  - Change mappings and re-run only the affected segments.
+
+### 🚀 Creator-friendly & self-hosted
+
+- **Run it where you want**
+  - On your own GPU PC at home.
+  - On a cheap cloud GPU instance.
+  - No external SaaS required.
+
+- **Single-node by default**
+  - Simple “Ultimate” layout:
+    - Go control plane (API + worker)
+    - Python ML service (GPU)
+    - PostgreSQL + Redis
+  - All wired together with Docker Compose.
+
+- **Keep your data**
+  - Videos, audio, transcripts and models live under a shared `/data` volume.
+  - Database stores **relative paths** only (easier to move / backup).
 
 ---
 
-## 📦 Status
+## 🧱 Architecture (short version)
 
-Early design & prototyping stage.
+You don’t need to understand all of this to use BabelFlow — but if you’re curious or want to hack on it, here’s the rough picture.
 
-- [x] Project blueprint & architecture design  
-- [ ] Initial Go control plane skeleton  
-- [ ] Python ML service skeleton (FastAPI)  
-- [ ] Smart split implementation (ASR + VAD)  
-- [ ] Duration-aware TTS integration  
+### Control plane (Go)
+
+- Go 1.22+, Gin, GORM.
+- Drives jobs through stages:
+
+  `media` → `separate` → `asr_smart` → `translate` → `tts_duration` → `merge`
+
+- Stores:
+  - `jobs` (one per video),
+  - `voice_profiles` (custom voices),
+  - `speakers` (logical speakers per job),
+  - `speaker_voice_bindings` (who uses which voice),
+  - `segments` (small time-aligned pieces).
+
+- Uses Redis as task queue:
+  - Job-level stage tasks, e.g. `job:123:stage:asr_smart`.
+  - Optionally segment-level TTS tasks.
+
+- Talks to an LLM (Qwen / DeepSeek / etc.) for translation:
+  - Prompts tuned for **dubbing-friendly, length-aware** output.
+
+### Data plane (Python / GPU)
+
+- Python 3.10+, FastAPI, PyTorch.
+- Global GPU lock / semaphore to avoid OOM.
+- Model registry with simple LRU-style caching:
+  - Demucs / UVR5 — vocal & BGM separation.
+  - Faster-Whisper — ASR with word-level timestamps.
+  - Pyannote.audio — VAD and (optional) diarization.
+  - IndexTTS2 — duration-aware TTS.
+
+- HTTP endpoints (examples):
+  - `POST /asr/smart_split`  
+    → segments with `start_ms`, `end_ms`, `text`, `speaker_label`, `split_reason`.
+  - `POST /tts/run`  
+    → takes text + `target_duration_sec` + `voice_config` + `output_relpath`,  
+    → returns saved audio path + actual duration.
+
+### Shared storage
+
+- Host `./data` mounted as `/data` in all containers.
+- DB only stores **relative paths** (e.g. `jobs/101/input.mp4`).
+- Apps resolve absolute paths using `DATA_ROOT`.
+
+---
+
+## 🗂 Data model highlights
+
+- **jobs**
+  - One row per video.
+  - Tracks status, current stage, progress, config JSON, IO paths, errors, retries, heartbeat.
+
+- **voice_profiles**
+  - Describes how to synthesize a voice:
+    - sample-based or checkpoint-based,
+    - paths to models / indexes / configs,
+    - language tags, internal speaker IDs.
+
+- **speakers**
+  - Per-job logical speakers generated by diarization  
+    (e.g. `SPK_01` is “the host”, `SPK_02` is “the guest”).
+
+- **speaker_voice_bindings**
+  - Maps `speaker_id` → `voice_profile_id`.  
+    This is where you say: “for this job, SPK_01 uses Voice A, SPK_02 uses Voice B”.
+
+- **segments**
+  - Minimal units for translation & TTS.
+  - Carry:
+    - `start_ms`, `end_ms`
+    - `original_duration_ms` (generated column)
+    - `src_text`, `tgt_text`
+    - `tts_audio_path`, `tts_duration_ms`
+    - `split_reason` (by punctuation, silence, max-duration, …)
+
+---
+
+## 📊 Status
+
+BabelFlow is in **early design & prototyping**.
+
+- [x] Architecture & schema design
+- [x] Speaker / voice mapping model
+- [ ] Go control plane skeleton (API + worker)
+- [ ] Python ML service skeleton (FastAPI)
+- [ ] Smart split implementation (ASR + VAD + rules)
+- [ ] Duration-aware TTS integration (IndexTTS2)
 - [ ] End-to-end demo pipeline
+
+If you’re interested in hacking on it, PRs and discussions are very welcome once the initial skeleton lands.
+
+---
+
+## 🛠 Tech stack
+
+- **Control plane**: Go, Gin, GORM, Redis, PostgreSQL  
+- **ML service**: FastAPI, PyTorch, Demucs/UVR5, Faster-Whisper, Pyannote, IndexTTS2  
+- **Orchestration**: Docker Compose  
+- **Translation**: Qwen / DeepSeek / pluggable LLM providers  
 
 ---
 
