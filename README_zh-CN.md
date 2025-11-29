@@ -1,5 +1,29 @@
 # HoloDub（幻读）
 
+<div align="center">
+
+  <img src="./header.svg" alt="HoloDub Logo" width="100%">
+
+  <h3>Holographic Audio Dubbing with Perfect Sync</h3>
+  <p>全息音频配音 · 智能语义切分 · 时长精准对齐</p>
+
+  <p>
+    <a href="https://golang.org/">
+      <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go Version">
+    </a>
+    <a href="https://www.python.org/">
+      <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white" alt="Python Version">
+    </a>
+    <a href="#">
+      <img src="https://img.shields.io/badge/Model-IndexTTS2-FF6F00?style=flat" alt="IndexTTS2">
+    </a>
+    <a href="https://opensource.org/licenses/MIT">
+      <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+    </a>
+  </p>
+
+</div>
+
 > Dub the whole performance, not just the words.  
 > 不止翻译台词，而是重现整场表演。
 
